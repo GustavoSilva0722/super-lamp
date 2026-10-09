@@ -29,31 +29,48 @@
   button:active { transform:translateY(3px); box-shadow:0 2px 0 #6b3d10; }
   .big { font-size:clamp(20px,5vw,36px); color:var(--gold); margin:10px 0; }
   #best { margin-top:14px; font-size:14px; opacity:.8; }
+  canvas { filter: sepia(.28) contrast(1.08) saturate(1.2); }
+  #grain { position:fixed; inset:-50%; pointer-events:none; opacity:.14; mix-blend-mode:multiply; animation: grain .5s steps(4) infinite;
+           background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .2  0 0 0 0 .12  0 0 0 0 .05  0 0 0 1.4 -.3'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+  @keyframes grain { 0%{transform:translate(0,0)} 25%{transform:translate(-3%,2%)} 50%{transform:translate(2%,-3%)} 75%{transform:translate(-2%,-1%)} 100%{transform:translate(0,0)} }
+  #mirror { position:fixed; top:64px; left:50%; transform:translateX(-50%); border:3px solid var(--gold); border-radius:8px; box-shadow:0 0 0 3px #6b3d10, 0 6px 14px #000; pointer-events:none; display:none; }
+  #mirror span { position:absolute; left:6px; top:2px; font-size:10px; letter-spacing:.2em; color:var(--gold); text-shadow:0 1px 0 #000; }
+  #prompt { position:absolute; left:50%; top:62%; transform:translateX(-50%); font-size:clamp(18px,5vw,34px); color:var(--gold); text-transform:uppercase; letter-spacing:.1em; text-shadow:0 3px 0 #6b3d10, 0 0 16px #000; display:none; animation:pulse .35s infinite alternate; white-space:nowrap; }
+  @keyframes pulse { from{transform:translateX(-50%) scale(1)} to{transform:translateX(-50%) scale(1.12)} }
+  #banner { position:absolute; left:50%; top:26%; transform:translateX(-50%) rotate(-3deg); font-size:clamp(22px,6vw,52px); font-weight:bold; font-style:italic; color:var(--paper); text-transform:uppercase; letter-spacing:.06em; text-shadow:0 4px 0 var(--blood), 0 0 18px #000; opacity:0; transition:opacity .4s; white-space:nowrap; }
+  #banner.show { opacity:1; }
+  .tag { color:var(--blood); background:var(--paper); display:inline-block; padding:2px 12px; transform:rotate(-2deg); font-weight:bold; letter-spacing:.2em; font-size:clamp(12px,3vw,18px); margin-bottom:10px; text-transform:uppercase; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="vignette"></div>
+<div id="mirror"><span>BEHIND YOU!</span></div>
 <div id="flash"></div>
 
 <div id="hud">
   <div class="row">
     <div class="stat">Distance <b id="dist">0</b> m</div>
-    <div class="stat">Score <b id="score">0</b></div>
+    <div class="stat">Score <b id="score">0</b> <small>· Best <b id="bestHud">0</b></small></div>
     <div class="stat">Idols <b id="coins">0</b></div>
   </div>
+  <div id="prompt">Space / swipe up — grab the rope!</div>
+  <div id="banner"></div>
   <div id="danger">The Boulder
     <div id="dangerbar"><div id="dangerfill"></div></div>
   </div>
 </div>
 
 <div id="menu" class="screen">
+  <div class="tag">Chapter I — The Boulder Awakens</div>
   <h1>Temple of the<br>Lost Wilds</h1>
   <h2>Outrun the boulder. Seize the golden idols. Don't look back.</h2>
   <div class="keys">
     <span>A / D &nbsp;or&nbsp; ← / →</span><span>Dash between lanes</span>
     <span>W / ↑ / Space</span><span>Leap over logs &amp; pits</span>
     <span>S / ↓</span><span>Slide under beams</span>
+    <span>Over a chasm: jump</span><span>Grab the swinging rope</span>
+    <span>M</span><span>Music on / off</span>
     <span>Touch</span><span>Swipe left / right / up / down</span>
   </div>
   <button id="start">Begin Expedition</button>
@@ -68,6 +85,7 @@
   <button id="retry">Run Again</button>
 </div>
 
+<div id="grain"></div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
@@ -115,7 +133,7 @@ const mat = {
   wood: M(0x7a4a22), woodDark: M(0x4a2c14),
   gold: new THREE.MeshLambertMaterial({ color: 0xf2c14e, emissive: 0x7a5200, flatShading: true }),
   pit: M(0x0e0803), mountain: M(0x7b6a55), snow: M(0xefe6d2),
-  skin: M(0xc98c5a), leather: M(0x6b3d10), sleeve: M(0x8a6a3a),
+  skin: M(0xc98c5a), rope: M(0xb08a52), boulder: M(0x7a6e60), hat: M(0x4a2c14), leather: M(0x6b3d10), sleeve: M(0x8a6a3a),
 };
 const geo = {
   trunk: new THREE.CylinderGeometry(0.25, 0.4, 3, 6),
@@ -301,11 +319,43 @@ function addIdol(x, y, z) {
   idols.push({ mesh: m, x, y, z });
 }
 
+function addChasm(z, len) {
+  const grp = new THREE.Group();
+  const w = PATH_W + 0.6;
+  grp.add(mesh(geo.box, mat.pit, 0, 0.04, -len / 2, w, 0.06, len));
+  grp.add(mesh(geo.box, mat.stoneDark, 0, 0.12, 0, w, .25, .5));
+  grp.add(mesh(geo.box, mat.stoneDark, 0, 0.12, -len, w, .25, .5));
+  // gantry with a hanging rope
+  const gz = 3;
+  grp.add(mesh(geo.pillar, mat.stone, -PATH_W / 2 - 1, 5, gz, 1.2, 10, 1.2));
+  grp.add(mesh(geo.pillar, mat.stone, PATH_W / 2 + 1, 5, gz, 1.2, 10, 1.2));
+  grp.add(mesh(geo.box, mat.stoneDark, 0, 10.2, gz, PATH_W + 4.4, 0.9, 1.4));
+  const rope = new THREE.Group();
+  rope.add(mesh(geo.log, mat.rope, 0, -3.3, 0, 0.12, 6.6, 0.12));
+  rope.add(mesh(geo.box, mat.woodDark, 0, -6.6, 0, 0.5, 0.3, 0.5));
+  rope.position.set(0, 9.7, gz);
+  grp.add(rope);
+  // idols floating over the chasm
+  for (let i = 0; i < Math.floor(len / 5); i++) addIdol(0, 2.4, z - 4 - i * 5);
+  grp.position.set(0, 0, z);
+  scene.add(grp);
+  obstacles.push({ type: 'chasm', x: 0, z: z - len / 2, hw: PATH_W / 2 + 1, hl: len / 2, grp, hit: false, rope, used: false, swayT: Math.random() * 6 });
+}
+
 let nextRowZ = -55;
+let lastChasm = false;
 function genRow(speed) {
   const z = nextRowZ;
   const spacing = 22 + speed * 0.55;
   const r = Math.random();
+  if (r > 0.86 && !lastChasm && dist > 40) {
+    const len = 34 + Math.max(speed, 14) * 1.1;
+    addChasm(z, len);
+    nextRowZ -= len + spacing * 0.7;
+    lastChasm = true;
+    return;
+  }
+  lastChasm = false;
   if (r < 0.18) {
     addObstacle('log', 1, z, true);
     for (let i = 0; i < 5; i++) addIdol(0, 1.2 + 1.4 * Math.sin(Math.PI * i / 4), z + 4 - 2 * i);
@@ -345,6 +395,40 @@ const hand = new THREE.Group();
   hand.scale.setScalar(0.32);
 }
 camera.add(hand);
+const hat = mesh(geo.box, mat.hat, 0, 0.5, -0.6, 0.5, 0.02, 0.3);
+hat.rotation.x = 0.35;
+camera.add(hat);
+const fpRope = new THREE.Group();
+fpRope.add(mesh(geo.log, mat.rope, 0, 1.4, -0.5, 0.05, 3.2, 0.05));
+fpRope.add(mesh(geo.box, mat.skin, 0.05, -0.1, -0.5, 0.1, 0.1, 0.1));
+fpRope.add(mesh(geo.box, mat.skin, -0.05, -0.2, -0.5, 0.1, 0.1, 0.1));
+fpRope.visible = false;
+camera.add(fpRope);
+
+/* The boulder that chases you */
+const boulder = new THREE.Group();
+{
+  const g = geo.bolder.clone();
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i += 1) {
+    const k = 1 + (Math.sin(i * 12.9898) * 43758.5453 % 1) * 0.12;
+    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k);
+  }
+  g.computeVertexNormals();
+  const rock = new THREE.Mesh(g, mat.boulder);
+  rock.scale.setScalar(3.4);
+  boulder.add(rock);
+  for (let i = 0; i < 7; i++) { // mossy / dark patches
+    const c = mesh(geo.rock, i % 2 ? mat.moss : mat.rockDark, 0, 0, 0, 0.9, 0.9, 0.9);
+    c.position.setFromSphericalCoords(3.3, Math.random() * 3.1, Math.random() * 6.28);
+    boulder.add(c);
+  }
+  boulder.position.y = 3.4;
+  scene.add(boulder);
+}
+const mirrorCam = new THREE.PerspectiveCamera(70, 2.4, 0.1, 300);
+mirrorCam.rotation.order = 'YXZ';
+scene.add(mirrorCam);
 
 /* ------------------------------------------------------------------ */
 /* Audio (tiny WebAudio synth)                                        */
@@ -381,12 +465,106 @@ const sfx = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Music: procedural pulp-adventure march (D minor)                   */
+/* ------------------------------------------------------------------ */
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+const music = { gain: null, step: 0, next: 0, timer: null, muted: false, noise: null };
+const ROOTS = [38, 34, 36, 33];
+const CHORDS = [[50, 53, 57], [46, 50, 53], [48, 52, 55], [45, 49, 52]];
+const MELODY = [
+  [62, -1, 65, 67, 69, -1, 67, 65],
+  [70, -1, 69, 67, 65, -1, 62, -1],
+  [64, -1, 67, 69, 72, -1, 71, 69],
+  [69, -1, 73, 76, 74, -1, 73, 69],
+];
+function musicInit() {
+  if (!actx || music.gain) return;
+  const comp = actx.createDynamicsCompressor();
+  music.gain = actx.createGain(); music.gain.gain.value = music.muted ? 0 : 0.55;
+  music.gain.connect(comp).connect(actx.destination);
+  const len = actx.sampleRate, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  music.noise = buf;
+}
+function mTone(freq, t, dur, type, vol, cutoff = 2000, detune = 0) {
+  const o = actx.createOscillator(), f = actx.createBiquadFilter(), g = actx.createGain();
+  o.type = type; o.frequency.value = freq; o.detune.value = detune;
+  f.type = 'lowpass'; f.frequency.setValueAtTime(cutoff * 0.5, t); f.frequency.linearRampToValueAtTime(cutoff, t + 0.04);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(f).connect(g).connect(music.gain); o.start(t); o.stop(t + dur + 0.02);
+}
+function mKick(t, vol = 0.7) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.14);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(g).connect(music.gain); o.start(t); o.stop(t + 0.22);
+}
+function mNoise(t, dur, vol, hp, bp = false) {
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = music.noise; f.type = bp ? 'bandpass' : 'highpass'; f.frequency.value = hp;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  s.connect(f).connect(g).connect(music.gain); s.start(t); s.stop(t + dur + 0.02);
+}
+function musicStep(s, t) {
+  const bar = (s >> 4) & 3, st = s & 15;
+  const hot = danger > 0.4 || speed > 22;
+  const root = ROOTS[bar];
+  if (st % 2 === 0) { // driving bass ostinato
+    const n = [0, 0, 12, 0, 0, 0, 12, 7][st / 2];
+    mTone(mtof(root + n), t, 0.16, 'sawtooth', 0.32, 500);
+  }
+  if (st % 4 === 0) mKick(t, hot ? 0.8 : 0.6);
+  if (st === 4 || st === 12) { mNoise(t, 0.14, 0.4, 1800, true); mTone(190, t, 0.08, 'triangle', 0.25, 800); }
+  if (hot ? true : st % 2 === 0) mNoise(t, st === 14 && hot ? 0.12 : 0.04, 0.12, 7000);
+  if (danger > 0.55 && st % 8 === 2) mKick(t, 0.9); // boulder pounding
+  if (bar === 3 && st >= 12) { mTone(st % 2 ? 110 : 90, t, 0.12, 'sine', 0.5, 600); }
+  if (st === 0 || st === 6 || st === 10) for (const n of CHORDS[bar]) mTone(mtof(n), t, 0.2, 'sawtooth', 0.07, 1500, st === 6 ? 7 : -7);
+  if (st % 2 === 0) { // brass lead
+    const n = MELODY[bar][st / 2];
+    if (n >= 0) {
+      mTone(mtof(n), t, 0.24, 'sawtooth', 0.2, 2600, -6);
+      mTone(mtof(n), t, 0.24, 'square', 0.07, 1800, 6);
+      if (hot) mTone(mtof(n - 5), t, 0.24, 'sawtooth', 0.1, 1800);
+      if (danger > 0.55) mTone(mtof(n + 12), t, 0.2, 'square', 0.05, 3000);
+    }
+  }
+}
+function musicTick() {
+  if (!actx || state === 'menu') return;
+  while (music.next < actx.currentTime + 0.12) {
+    musicStep(music.step, music.next);
+    const bpm = 144 + (Math.min(speed, 34) / 34) * 24 + danger * 8;
+    music.next += 60 / bpm / 4;
+    music.step++;
+  }
+}
+function musicStart() {
+  if (!actx) return;
+  musicInit();
+  music.gain.gain.cancelScheduledValues(actx.currentTime);
+  music.gain.gain.value = music.muted ? 0 : 0.55;
+  music.step = 0; music.next = actx.currentTime + 0.08;
+  if (!music.timer) music.timer = setInterval(musicTick, 25);
+}
+function musicStop() {
+  if (!actx || !music.gain) return;
+  const t = actx.currentTime;
+  music.gain.gain.cancelScheduledValues(t);
+  music.gain.gain.setValueAtTime(music.gain.gain.value, t);
+  music.gain.gain.linearRampToValueAtTime(0, t + 0.6);
+  clearInterval(music.timer); music.timer = null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Game state                                                         */
 /* ------------------------------------------------------------------ */
 const $ = id => document.getElementById(id);
 const hud = $('hud'), menu = $('menu'), over = $('over'), vignette = $('vignette'), flashEl = $('flash');
 
 const P = { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true };
+let swing = null, deathKind = null, deathT = 0, boulderGap = 36, bannerNext = 120;
+const BANNERS = ['Hold on to your hat!', 'The temple trembles!', 'Fortune and glory!', 'Run, you fool!', 'No turning back!', 'It is gaining!'];
 let state = 'menu';
 let speed = 0, baseSpeed = 14, danger = 0, stumble = 0;
 let score = 0, idolCount = 0, dist = 0, shake = 0, runT = 0, roll = 0;
@@ -406,6 +584,7 @@ function resetGame() {
   Object.assign(P, { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true });
   speed = 0; baseSpeed = 14; danger = 0.0; stumble = 0;
   score = 0; idolCount = 0; dist = 0; shake = 0; runT = 0; roll = 0;
+  swing = null; deathKind = null; deathT = 0; boulderGap = 36; bannerNext = 120; lastChasm = false; fpRope.visible = false;
   nextRowZ = -55; chunkFront = 60;
   while (chunkFront > -300) { chunkFront -= CHUNK; makeChunk(chunkFront + CHUNK); }
   while (nextRowZ > -240) genRow(14);
@@ -419,43 +598,63 @@ function startGame() {
   hud.style.display = 'block';
   state = 'play';
   speed = 10;
+  musicStart();
 }
 
 function endGame(reason) {
   state = 'dead';
+  deathKind = reason; deathT = 0; swing = null; fpRope.visible = false; boulderGap = Math.max(boulderGap, 8);
+  musicStop();
   sfx.die();
   if (rumbleGain) rumbleGain.gain.value = 0;
   flashEl.style.transition = 'none'; flashEl.style.opacity = .8;
   requestAnimationFrame(() => { flashEl.style.transition = 'opacity 1s'; flashEl.style.opacity = 0; });
   const isBest = score > best;
   if (isBest) { best = score; try { localStorage.setItem('tlw_best', best); } catch (e) {} }
-  $('overTitle').textContent = reason === 'boulder' ? 'Crushed!' : 'Fallen!';
-  $('overSub').textContent = reason === 'boulder' ? 'The boulder always wins... eventually.' : 'The wilds claim another explorer.';
+  $('overTitle').textContent = reason === 'boulder' ? 'Crushed!' : 'Into the Abyss!';
+  $('overSub').textContent = reason === 'boulder' ? 'The boulder always wins... eventually.' : 'The rope was right there, adventurer.';
   $('fScore').textContent = score; $('fDist').textContent = Math.floor(dist); $('fCoins').textContent = idolCount;
   $('fBest').textContent = isBest ? '★ New best score! ★' : `Best: ${best}`;
-  setTimeout(() => { over.classList.remove('hidden'); hud.style.display = 'none'; }, 900);
+  setTimeout(() => { over.classList.remove('hidden'); hud.style.display = 'none'; }, reason === 'boulder' ? 1700 : 1100);
 }
 
 /* ------------------------------------------------------------------ */
 /* Input                                                              */
 /* ------------------------------------------------------------------ */
 function moveLane(d) {
-  if (state !== 'play') return;
+  if (state !== 'play' || swing) return;
   const n = Math.max(0, Math.min(2, P.lane + d));
   if (n !== P.lane) { P.lane = n; roll = -d * 0.07; sfx.lane(); }
 }
+function chasmAhead() {
+  for (const o of obstacles) {
+    if (o.type !== 'chasm' || o.used) continue;
+    const d = P.z - (o.z + o.hl);
+    if (d > -1 && d < 13) return o;
+  }
+  return null;
+}
 function jump() {
-  if (state !== 'play' || !P.grounded) return;
+  if (state !== 'play' || swing) return;
+  const c = chasmAhead();
+  if (c && P.grounded) {
+    c.used = true; c.rope.visible = false;
+    swing = { o: c, startZ: P.z, endZ: c.z - c.hl - 1.5 };
+    P.lane = 1; P.sliding = 0; fpRope.visible = true; sfx.jump(); beep(520, .2, 'triangle', .1, 300);
+    return;
+  }
+  if (!P.grounded) return;
   P.vy = 10.2; P.grounded = false; P.sliding = 0; sfx.jump();
 }
 function slide() {
-  if (state !== 'play') return;
+  if (state !== 'play' || swing) return;
   if (!P.grounded) P.vy = Math.min(P.vy, -12); // fast-fall into slide
   P.sliding = 0.75; sfx.slide();
 }
 addEventListener('keydown', e => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
+  if (k === 'm') { music.muted = !music.muted; if (music.gain) music.gain.gain.value = music.muted ? 0 : 0.55; return; }
   if (state !== 'play') {
     if (k === ' ' || k === 'enter') { startGame(); e.preventDefault(); }
     return;
@@ -481,6 +680,11 @@ $('retry').addEventListener('click', startGame);
 /* ------------------------------------------------------------------ */
 /* Update                                                             */
 /* ------------------------------------------------------------------ */
+let bannerTimer = null;
+function showBanner(text) {
+  const b = $('banner'); b.textContent = text; b.classList.add('show');
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.classList.remove('show'), 2000);
+}
 const EYE = 1.7, EYE_SLIDE = 0.75;
 
 function update(dt) {
@@ -499,22 +703,29 @@ function update(dt) {
 
     // lane + vertical motion
     P.x += (LANES[P.lane] - P.x) * Math.min(1, dt * 14);
-    if (!P.grounded) {
+    if (swing) {
+      const prog = Math.min(1, Math.max(0, (swing.startZ - P.z) / (swing.startZ - swing.endZ)));
+      P.y = 2.2 * Math.sin(Math.PI * prog); P.vy = 0; P.grounded = false;
+      fpRope.rotation.z = Math.sin(runT * 5) * 0.04;
+      if (P.z <= swing.endZ) { swing = null; fpRope.visible = false; P.y = 0.01; sfx.lane(); }
+    } else if (!P.grounded) {
       P.vy -= 26 * dt; P.y += P.vy * dt;
       if (P.y <= 0) { P.y = 0; P.vy = 0; P.grounded = true; }
     }
     if (P.sliding > 0) P.sliding -= dt;
 
     // boulder pressure
-    danger = Math.max(0, danger - 0.03 * dt) + 0;
+    danger = Math.max(0, danger - 0.03 * dt);
     if (danger >= 1) endGame('boulder');
+    if (dist > bannerNext) { showBanner(BANNERS[(bannerNext / 120 - 1) % BANNERS.length | 0]); bannerNext += 120; }
 
     // collisions
     const sliding = P.sliding > 0;
     for (const o of obstacles) {
-      if (o.hit) continue;
+      if (o.hit || (swing && o.type === 'chasm')) continue;
       if (Math.abs(P.z - o.z) > o.hl + 0.35) continue;
       if (Math.abs(P.x - o.x) > o.hw + 0.1) continue;
+      if (o.type === 'chasm') { if (P.y < 0.4) { endGame('fall'); P.vy = -2; } continue; }
       let hit = false;
       if (o.type === 'log') hit = P.y < 0.75;
       else if (o.type === 'beam') hit = !sliding;
@@ -542,9 +753,29 @@ function update(dt) {
     // gentle auto-drift on the title screen
     P.z -= 8 * dt; speed = 8; P.x = Math.sin(runT * .5) * 1.5;
   } else {
-    speed *= Math.pow(0.02, dt);
-    P.z -= speed * dt;
+    deathT += dt;
+    if (deathKind === 'fall') {
+      speed *= Math.pow(0.3, dt); P.z -= speed * dt;
+      P.vy -= 26 * dt; P.y += P.vy * dt; P.y = Math.max(P.y, -30);
+    } else {
+      speed *= Math.pow(0.02, dt); P.z -= speed * dt;
+    }
   }
+
+  // the boulder
+  if (state === 'play') {
+    const target = 34 - Math.min(1, danger) * 28;
+    boulderGap += (target - boulderGap) * Math.min(1, dt * 2.5);
+  } else if (state === 'dead' && deathKind === 'boulder') {
+    boulderGap -= 34 * dt;
+  }
+  boulder.visible = state !== 'menu';
+  boulder.position.set(P.x * 0.5, 3.4, P.z + boulderGap);
+  boulder.rotation.x -= (Math.max(speed, 12) / 3.4) * dt * (state === 'dead' ? 1.6 : 1);
+  boulder.rotation.z = Math.sin(runT * 3) * 0.03;
+  for (const o of obstacles) if (o.type === 'chasm') { o.swayT += dt; o.rope.rotation.x = Math.sin(o.swayT * 2) * 0.12; }
+  const prompt = $('prompt');
+  prompt.style.display = state === 'play' && !swing && chasmAhead() ? 'block' : 'none';
 
   // world streaming
   while (nextRowZ > P.z - 240) genRow(Math.max(speed, 14));
@@ -581,8 +812,16 @@ function update(dt) {
   const sy = (Math.random() - .5) * shake * .35;
   camera.position.set(P.x + sx, P.y + camera.userData.eye + bob + sy, P.z);
   roll += (0 - roll) * Math.min(1, dt * 7);
-  camera.rotation.set(-0.05 + (P.grounded ? 0 : P.vy * -0.004) + shake * .05, 0, roll + (LANES[P.lane] - P.x) * -0.015);
+  let pitch = -0.05 + (P.grounded ? 0 : P.vy * -0.004) + shake * .05;
+  let yaw = 0, rz = roll + (LANES[P.lane] - P.x) * -0.015;
+  if (swing) { pitch += 0.12 + Math.sin(runT * 4) * 0.03; rz += Math.sin(runT * 3) * 0.05; }
+  if (state === 'dead') {
+    if (deathKind === 'boulder') yaw = Math.PI * Math.min(1, deathT / 0.5);
+    else pitch = Math.max(-1.4, pitch - deathT * 1.5);
+  }
+  camera.rotation.set(pitch, yaw, rz);
   // hand sway
+  hand.visible = !swing;
   const hb = state === 'play' ? Math.sin(runT * speed * 0.7) : 0;
   hand.position.set(0.38 + hb * 0.02, -0.36 + Math.abs(hb) * 0.04 + (P.sliding > 0 ? -.1 : 0), -0.6);
   hand.rotation.x = 0.15 + hb * 0.05;
@@ -593,6 +832,7 @@ function update(dt) {
   // HUD & rumble
   $('dist').textContent = Math.floor(dist);
   $('score').textContent = Math.floor(score);
+  $('bestHud').textContent = Math.max(best, Math.floor(score));
   $('coins').textContent = idolCount;
   $('dangerfill').style.width = Math.min(100, danger * 100) + '%';
   vignette.style.opacity = state === 'play' ? Math.max(0, (danger - .25) * 1.2) * (0.75 + 0.25 * Math.sin(runT * 12)) : 0;
@@ -608,13 +848,34 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, innerWidth, innerHeight);
   renderer.render(scene, camera);
+  const mir = $('mirror');
+  const showMirror = state === 'play';
+  mir.style.display = showMirror ? 'block' : 'none';
+  if (showMirror) {
+    const mw = Math.min(300, innerWidth * 0.46), mh = Math.round(mw * 0.42);
+    mir.style.width = mw + 'px'; mir.style.height = mh + 'px';
+    const r = mir.getBoundingClientRect();
+    const vx = r.left + 3, vw = r.width - 6, vh = r.height - 6, vy = innerHeight - (r.top + 3) - vh;
+    mirrorCam.aspect = vw / vh; mirrorCam.updateProjectionMatrix();
+    mirrorCam.position.set(P.x, camera.position.y, P.z + 0.5);
+    mirrorCam.rotation.set(-0.12, Math.PI, 0);
+    renderer.setScissorTest(true);
+    renderer.setViewport(vx, vy, vw, vh); renderer.setScissor(vx, vy, vw, vh);
+    renderer.clear();
+    hand.visible = false; hat.visible = false; fpRope.visible = false;
+    renderer.render(scene, mirrorCam);
+    hat.visible = true; fpRope.visible = !!swing;
+    renderer.setScissorTest(false);
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
 // debug/test hook
-window.__game = { P, get state() { return state; }, get danger() { return danger; }, startGame, obstacles, idols, jump, slide, moveLane };
+window.__game = { get swing() { return swing; }, get deathKind() { return deathKind; }, get boulderGap() { return boulderGap; }, set danger(v) { danger = v; }, P, get state() { return state; }, get danger() { return danger; }, startGame, obstacles, idols, jump, slide, moveLane };
 </script>
 </body>
 </html>
