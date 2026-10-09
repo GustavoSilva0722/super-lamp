@@ -67,7 +67,8 @@
   <h2>Outrun the boulder. Seize the golden idols. Don't look back.</h2>
   <div class="keys">
     <span>A / D &nbsp;or&nbsp; ← / →</span><span>Dash between lanes</span>
-    <span>W / ↑ / Space</span><span>Leap over logs &amp; pits</span>
+    <span>W / ↑ / Space</span><span>Leap logs &amp; pits (press twice: double jump over boulders!)</span>
+    <span>C</span><span>Switch first / third-person camera</span>
     <span>S / ↓</span><span>Slide under beams</span>
     <span>Over a chasm: jump</span><span>Grab the swinging rope</span>
     <span>M</span><span>Music on / off</span>
@@ -151,8 +152,9 @@ const geo = {
 /* ------------------------------------------------------------------ */
 /* World constants                                                    */
 /* ------------------------------------------------------------------ */
-const LANES = [-3, 0, 3];
-const PATH_W = 9.6;
+const LANES = [-6, -3, 0, 3, 6];
+const MID = 2;
+const PATH_W = 15.6;
 const CHUNK = 40;
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -180,7 +182,7 @@ function brickTexture() {
   return t;
 }
 const pathTex = brickTexture();
-pathTex.repeat.set(3, 40);
+pathTex.repeat.set(5, 40);
 const pathMesh = new THREE.Mesh(new THREE.PlaneGeometry(PATH_W, 240), new THREE.MeshLambertMaterial({ map: pathTex }));
 pathMesh.rotation.x = -Math.PI / 2;
 scene.add(pathMesh);
@@ -361,18 +363,18 @@ function genRow(speed) {
     for (let i = 0; i < 5; i++) addIdol(0, 1.2 + 1.4 * Math.sin(Math.PI * i / 4), z + 4 - 2 * i);
   } else if (r < 0.32) {
     addObstacle('beam', 1, z, true);
-    for (let i = 0; i < 5; i++) addIdol(LANES[1], 0.6, z + 4 - 2 * i);
+    for (let i = 0; i < 5; i++) addIdol(LANES[MID], 0.6, z + 4 - 2 * i);
   } else if (r < 0.46) {
     addObstacle('pit', 1, z, true);
     for (let i = 0; i < 5; i++) addIdol(0, 1.3 + 1.4 * Math.sin(Math.PI * i / 4), z + 4 - 2 * i);
   } else {
     // 1-2 blocked lanes with mixed types, at least one lane stays clear
-    const free = Math.floor(rand(0, 3));
+    const free = Math.floor(rand(0, LANES.length));
     const types = ['rock', 'log', 'beam', 'pit', 'rock'];
     const t = pick(types);
-    for (let l = 0; l < 3; l++) {
+    for (let l = 0; l < LANES.length; l++) {
       if (l === free) continue;
-      if (Math.random() < .85) addObstacle(Math.random() < .5 ? t : pick(types), l, z);
+      if (Math.random() < .55) addObstacle(Math.random() < .5 ? t : pick(types), l, z);
     }
     for (let i = 0; i < 5; i++) addIdol(LANES[free], 1.2, z - 6 - i * 2);
   }
@@ -404,6 +406,34 @@ fpRope.add(mesh(geo.box, mat.skin, 0.05, -0.1, -0.5, 0.1, 0.1, 0.1));
 fpRope.add(mesh(geo.box, mat.skin, -0.05, -0.2, -0.5, 0.1, 0.1, 0.1));
 fpRope.visible = false;
 camera.add(fpRope);
+
+/* The explorer (visible in third-person / title / death views) */
+const explorer = new THREE.Group();
+const ex = {};
+{
+  const jacket = M(0x8a5a2b), pants = M(0x5a4a32), boot = M(0x2b1a0b), strap = M(0x3a2410), white = M(0xe8d9b5);
+  const body = new THREE.Group(); explorer.add(body); ex.body = body;
+  const limb = (mt, w, h, d, x, y) => { const p = new THREE.Group(); p.position.set(x, y, 0); const m = mesh(geo.box, mt, 0, -h / 2, 0, w, h, d); p.add(m); body.add(p); return p; };
+  ex.legL = limb(pants, 0.28, 0.9, 0.3, -0.2, 0.95); ex.legR = limb(pants, 0.28, 0.9, 0.3, 0.2, 0.95);
+  for (const l of [ex.legL, ex.legR]) l.add(mesh(geo.box, boot, 0, -0.9, -0.06, 0.3, 0.2, 0.42));
+  body.add(mesh(geo.box, jacket, 0, 1.42, 0, 0.78, 0.9, 0.42));
+  body.add(mesh(geo.box, strap, 0, 1.45, -0.01, 0.12, 0.95, 0.46).rotateZ(0.6));
+  body.add(mesh(geo.box, strap, 0.3, 1.0, 0.3, 0.38, 0.4, 0.2)); // satchel
+  ex.armL = limb(jacket, 0.22, 0.8, 0.24, -0.5, 1.82); ex.armR = limb(jacket, 0.22, 0.8, 0.24, 0.5, 1.82);
+  ex.armR.add(mesh(geo.box, mat.skin, 0, -0.85, 0, 0.2, 0.18, 0.2));
+  ex.armR.add(mesh(geo.log, mat.leather, 0, -1.0, -0.3, 0.07, 0.8, 0.07).rotateX(Math.PI / 2)); // whip
+  ex.armL.add(mesh(geo.box, mat.skin, 0, -0.85, 0, 0.2, 0.18, 0.2));
+  const head = new THREE.Group(); head.position.set(0, 2.1, 0); body.add(head);
+  head.add(mesh(geo.box, mat.skin, 0, 0, 0, 0.4, 0.44, 0.4));
+  head.add(mesh(geo.box, M(0x1a0f06), -0.1, 0.03, -0.205, 0.07, 0.07, 0.02));
+  head.add(mesh(geo.box, M(0x1a0f06), 0.1, 0.03, -0.205, 0.07, 0.07, 0.02));
+  head.add(mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.04, 10), mat.hat, 0, 0.24, 0));
+  head.add(mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.26, 8), mat.hat, 0, 0.38, 0));
+  head.add(mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.06, 8), strap, 0, 0.3, 0));
+  explorer.visible = false;
+  scene.add(explorer);
+}
+let camMode = 'first';
 
 /* The boulder that chases you */
 const boulder = new THREE.Group();
@@ -480,25 +510,45 @@ const MELODY = [
 function musicInit() {
   if (!actx || music.gain) return;
   const comp = actx.createDynamicsCompressor();
-  music.gain = actx.createGain(); music.gain.gain.value = music.muted ? 0 : 0.55;
+  music.gain = actx.createGain(); music.gain.gain.value = music.muted ? 0 : 0.7;
+  comp.threshold.value = -20; comp.ratio.value = 6;
   music.gain.connect(comp).connect(actx.destination);
+  // reverb send: big temple hall
+  const rl = Math.floor(actx.sampleRate * 2.2), ir = actx.createBuffer(2, rl, actx.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < rl; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / rl, 3); }
+  const conv = actx.createConvolver(); conv.buffer = ir;
+  music.send = actx.createGain(); music.send.gain.value = 0.35;
+  const wet = actx.createGain(); wet.gain.value = 0.6;
+  music.send.connect(conv).connect(wet).connect(comp);
+  const k = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; k[i] = Math.tanh(x * 4); }
+  music.curve = k;
   const len = actx.sampleRate, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   music.noise = buf;
 }
-function mTone(freq, t, dur, type, vol, cutoff = 2000, detune = 0) {
+function mTone(freq, t, dur, type, vol, cutoff = 2000, detune = 0, dist = false) {
   const o = actx.createOscillator(), f = actx.createBiquadFilter(), g = actx.createGain();
   o.type = type; o.frequency.value = freq; o.detune.value = detune;
   f.type = 'lowpass'; f.frequency.setValueAtTime(cutoff * 0.5, t); f.frequency.linearRampToValueAtTime(cutoff, t + 0.04);
   g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.015);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(f).connect(g).connect(music.gain); o.start(t); o.stop(t + dur + 0.02);
+  if (dist) { const sh = actx.createWaveShaper(); sh.curve = music.curve; o.connect(sh).connect(f); } else o.connect(f);
+  f.connect(g).connect(music.gain);
+  if (freq > 120) g.connect(music.send);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function mTom(t, f, vol = 0.7, dur = 0.5) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.setValueAtTime(f * 1.8, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.12);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(music.gain); g.connect(music.send); o.start(t); o.stop(t + dur + 0.02);
+  mNoise(t, 0.05, vol * 0.4, 400, true);
 }
 function mKick(t, vol = 0.7) {
   const o = actx.createOscillator(), g = actx.createGain();
-  o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.14);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-  o.connect(g).connect(music.gain); o.start(t); o.stop(t + 0.22);
+  o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(34, t + 0.16);
+  g.gain.setValueAtTime(vol * 1.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+  o.connect(g).connect(music.gain); o.start(t); o.stop(t + 0.4);
 }
 function mNoise(t, dur, vol, hp, bp = false) {
   const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
@@ -512,19 +562,26 @@ function musicStep(s, t) {
   const root = ROOTS[bar];
   if (st % 2 === 0) { // driving bass ostinato
     const n = [0, 0, 12, 0, 0, 0, 12, 7][st / 2];
-    mTone(mtof(root + n), t, 0.16, 'sawtooth', 0.32, 500);
+    mTone(mtof(root + n), t, 0.17, 'sawtooth', 0.38, 520, 0, true);
+    mTone(mtof(root + n - 12), t, 0.17, 'square', 0.18, 260, 0, true);
   }
+  if (st % 4 === 0) mTone(mtof(root - 12), t, 0.3, 'sine', 0.55, 200); // sub
+  if (st === 0) mTone(mtof(root - 12), t, 1.5, 'sawtooth', 0.14, 220, 4, true); // dark drone
+  if (st === 0 || st === 8) mTom(t, 62, 0.9, 0.7); // war drum
+  if (hot && (st === 6 || st === 14)) mTom(t, 85, 0.6, 0.35);
   if (st % 4 === 0) mKick(t, hot ? 0.8 : 0.6);
   if (st === 4 || st === 12) { mNoise(t, 0.14, 0.4, 1800, true); mTone(190, t, 0.08, 'triangle', 0.25, 800); }
   if (hot ? true : st % 2 === 0) mNoise(t, st === 14 && hot ? 0.12 : 0.04, 0.12, 7000);
   if (danger > 0.55 && st % 8 === 2) mKick(t, 0.9); // boulder pounding
-  if (bar === 3 && st >= 12) { mTone(st % 2 ? 110 : 90, t, 0.12, 'sine', 0.5, 600); }
+  if (bar === 3 && st >= 12) mTom(t, st % 2 ? 110 : 90, 0.7, 0.2);
+  if (danger > 0.5 && st % 2 === 1) mTom(t, 70 + (st % 8) * 6, 0.35, 0.15);
   if (st === 0 || st === 6 || st === 10) for (const n of CHORDS[bar]) mTone(mtof(n), t, 0.2, 'sawtooth', 0.07, 1500, st === 6 ? 7 : -7);
   if (st % 2 === 0) { // brass lead
     const n = MELODY[bar][st / 2];
     if (n >= 0) {
       mTone(mtof(n), t, 0.24, 'sawtooth', 0.2, 2600, -6);
       mTone(mtof(n), t, 0.24, 'square', 0.07, 1800, 6);
+      if (hot) mTone(mtof(n - 12), t, 0.28, 'sawtooth', 0.16, 1400, 0, true);
       if (hot) mTone(mtof(n - 5), t, 0.24, 'sawtooth', 0.1, 1800);
       if (danger > 0.55) mTone(mtof(n + 12), t, 0.2, 'square', 0.05, 3000);
     }
@@ -543,7 +600,7 @@ function musicStart() {
   if (!actx) return;
   musicInit();
   music.gain.gain.cancelScheduledValues(actx.currentTime);
-  music.gain.gain.value = music.muted ? 0 : 0.55;
+  music.gain.gain.value = music.muted ? 0 : 0.7;
   music.step = 0; music.next = actx.currentTime + 0.08;
   if (!music.timer) music.timer = setInterval(musicTick, 25);
 }
@@ -562,8 +619,9 @@ function musicStop() {
 const $ = id => document.getElementById(id);
 const hud = $('hud'), menu = $('menu'), over = $('over'), vignette = $('vignette'), flashEl = $('flash');
 
-const P = { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true };
+const P = { x: 0, y: 0, vy: 0, z: 0, lane: MID, sliding: 0, grounded: true, jumps: 0 };
 let swing = null, deathKind = null, deathT = 0, boulderGap = 36, bannerNext = 120;
+let runPhase = 0;
 const BANNERS = ['Hold on to your hat!', 'The temple trembles!', 'Fortune and glory!', 'Run, you fool!', 'No turning back!', 'It is gaining!'];
 let state = 'menu';
 let speed = 0, baseSpeed = 14, danger = 0, stumble = 0;
@@ -581,7 +639,7 @@ function clearWorld() {
 
 function resetGame() {
   clearWorld();
-  Object.assign(P, { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true });
+  Object.assign(P, { x: 0, y: 0, vy: 0, z: 0, lane: MID, sliding: 0, grounded: true, jumps: 0 });
   speed = 0; baseSpeed = 14; danger = 0.0; stumble = 0;
   score = 0; idolCount = 0; dist = 0; shake = 0; runT = 0; roll = 0;
   swing = null; deathKind = null; deathT = 0; boulderGap = 36; bannerNext = 120; lastChasm = false; fpRope.visible = false;
@@ -623,7 +681,7 @@ function endGame(reason) {
 /* ------------------------------------------------------------------ */
 function moveLane(d) {
   if (state !== 'play' || swing) return;
-  const n = Math.max(0, Math.min(2, P.lane + d));
+  const n = Math.max(0, Math.min(LANES.length - 1, P.lane + d));
   if (n !== P.lane) { P.lane = n; roll = -d * 0.07; sfx.lane(); }
 }
 function chasmAhead() {
@@ -637,14 +695,19 @@ function chasmAhead() {
 function jump() {
   if (state !== 'play' || swing) return;
   const c = chasmAhead();
-  if (c && P.grounded) {
-    c.used = true; c.rope.visible = false;
+  if (c) {
+    c.used = true; if (camMode === 'first') c.rope.visible = false;
     swing = { o: c, startZ: P.z, endZ: c.z - c.hl - 1.5 };
-    P.lane = 1; P.sliding = 0; fpRope.visible = true; sfx.jump(); beep(520, .2, 'triangle', .1, 300);
+    P.lane = MID; P.sliding = 0; fpRope.visible = camMode === 'first'; sfx.jump(); beep(520, .2, 'triangle', .1, 300);
     return;
   }
-  if (!P.grounded) return;
-  P.vy = 10.2; P.grounded = false; P.sliding = 0; sfx.jump();
+  if (P.grounded) {
+    P.vy = 10.2; P.grounded = false; P.sliding = 0; P.jumps = 1; sfx.jump();
+  } else if (P.jumps < 2) {
+    P.vy = 11; P.jumps = 2; sfx.jump(); beep(520, .22, 'triangle', .12, 420);
+    flashEl.style.transition = 'none'; flashEl.style.opacity = .12;
+    requestAnimationFrame(() => { flashEl.style.transition = 'opacity .3s'; flashEl.style.opacity = 0; });
+  }
 }
 function slide() {
   if (state !== 'play' || swing) return;
@@ -654,7 +717,8 @@ function slide() {
 addEventListener('keydown', e => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
-  if (k === 'm') { music.muted = !music.muted; if (music.gain) music.gain.gain.value = music.muted ? 0 : 0.55; return; }
+  if (k === 'c') { camMode = camMode === 'first' ? 'third' : 'first'; return; }
+  if (k === 'm') { music.muted = !music.muted; if (music.gain) music.gain.gain.value = music.muted ? 0 : 0.7; return; }
   if (state !== 'play') {
     if (k === ' ' || k === 'enter') { startGame(); e.preventDefault(); }
     return;
@@ -706,11 +770,11 @@ function update(dt) {
     if (swing) {
       const prog = Math.min(1, Math.max(0, (swing.startZ - P.z) / (swing.startZ - swing.endZ)));
       P.y = 2.2 * Math.sin(Math.PI * prog); P.vy = 0; P.grounded = false;
-      fpRope.rotation.z = Math.sin(runT * 5) * 0.04;
-      if (P.z <= swing.endZ) { swing = null; fpRope.visible = false; P.y = 0.01; sfx.lane(); }
+      fpRope.rotation.z = Math.sin(runT * 5) * 0.04; fpRope.visible = camMode === 'first';
+      if (P.z <= swing.endZ) { swing = null; fpRope.visible = false; P.y = 0.01; P.jumps = 0; sfx.lane(); }
     } else if (!P.grounded) {
       P.vy -= 26 * dt; P.y += P.vy * dt;
-      if (P.y <= 0) { P.y = 0; P.vy = 0; P.grounded = true; }
+      if (P.y <= 0) { P.y = 0; P.vy = 0; P.grounded = true; P.jumps = 0; }
     }
     if (P.sliding > 0) P.sliding -= dt;
 
@@ -819,9 +883,26 @@ function update(dt) {
     if (deathKind === 'boulder') yaw = Math.PI * Math.min(1, deathT / 0.5);
     else pitch = Math.max(-1.4, pitch - deathT * 1.5);
   }
-  camera.rotation.set(pitch, yaw, rz);
+  const third = camMode === 'third' || state === 'menu';
+  if (third) {
+    const bl = state === 'dead' && deathKind === 'boulder';
+    camera.position.set(P.x * 0.85 + sx, P.y * 0.5 + 3.6, P.z + 8);
+    camera.rotation.set(0, 0, 0);
+    camera.lookAt(bl ? boulder.position.x : P.x, bl ? 3 : P.y * 0.5 + 1.5, bl ? boulder.position.z : P.z - 7);
+  } else camera.rotation.set(pitch, yaw, rz);
+  // explorer pose
+  explorer.visible = third;
+  runPhase += dt * (6 + speed * 0.35) * (state === 'dead' ? 0 : 1);
+  const sw = Math.sin(runPhase), air = !P.grounded && !swing;
+  explorer.position.set(P.x, P.y, P.z);
+  explorer.rotation.y = (LANES[P.lane] - P.x) * 0.06 + (state === 'menu' ? Math.sin(runT * 0.8) * 0.4 : 0);
+  ex.legL.rotation.x = air ? -0.9 : sw * 0.9; ex.legR.rotation.x = air ? 0.5 : -sw * 0.9;
+  ex.armL.rotation.x = swing ? Math.PI : (air ? -2.4 : -sw * 0.8); ex.armR.rotation.x = swing ? Math.PI : (air ? -2.4 : sw * 0.8);
+  ex.body.rotation.x = P.sliding > 0 ? -1.1 : 0.12; ex.body.position.y = P.sliding > 0 ? -0.5 : Math.abs(sw) * 0.06;
+  if (state === 'dead' && deathKind === 'boulder') { explorer.rotation.x = Math.min(1.4, deathT * 3); }
   // hand sway
-  hand.visible = !swing;
+  hand.visible = !swing && !third;
+  hat.visible = !third;
   const hb = state === 'play' ? Math.sin(runT * speed * 0.7) : 0;
   hand.position.set(0.38 + hb * 0.02, -0.36 + Math.abs(hb) * 0.04 + (P.sliding > 0 ? -.1 : 0), -0.6);
   hand.rotation.x = 0.15 + hb * 0.05;
@@ -836,7 +917,7 @@ function update(dt) {
   $('coins').textContent = idolCount;
   $('dangerfill').style.width = Math.min(100, danger * 100) + '%';
   vignette.style.opacity = state === 'play' ? Math.max(0, (danger - .25) * 1.2) * (0.75 + 0.25 * Math.sin(runT * 12)) : 0;
-  if (rumbleGain && actx) rumbleGain.gain.value = state === 'play' ? Math.min(1, danger * 1.3) * 0.7 : 0;
+  if (rumbleGain && actx) rumbleGain.gain.value = state === 'play' ? Math.min(1, danger * 1.3) * 1.0 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -865,9 +946,9 @@ function frame(now) {
     renderer.setScissorTest(true);
     renderer.setViewport(vx, vy, vw, vh); renderer.setScissor(vx, vy, vw, vh);
     renderer.clear();
-    hand.visible = false; hat.visible = false; fpRope.visible = false;
+    hand.visible = false; hat.visible = false; fpRope.visible = false; explorer.visible = false;
     renderer.render(scene, mirrorCam);
-    hat.visible = true; fpRope.visible = !!swing;
+    hat.visible = camMode === 'first'; fpRope.visible = !!swing && camMode === 'first'; explorer.visible = camMode === 'third';
     renderer.setScissorTest(false);
   }
   requestAnimationFrame(frame);
