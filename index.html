@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Temple of the Lost Wilds</title>
+<style>
+  :root { --gold:#f2c14e; --ink:#2b1a0b; --paper:#f4e4c1; --blood:#b3261e; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#1a0f06; font-family: Georgia, "Times New Roman", serif; color:var(--paper); touch-action:none; user-select:none; -webkit-user-select:none; }
+  canvas { display:block; width:100%; height:100%; }
+  #hud { position:fixed; inset:0; pointer-events:none; display:none; }
+  #hud .row { position:absolute; top:14px; left:16px; right:16px; display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .stat { background:rgba(43,26,11,.72); border:2px solid var(--gold); border-radius:6px; padding:6px 12px; font-size:clamp(14px,3.6vw,22px); letter-spacing:.05em; text-shadow:0 1px 0 #000; }
+  .stat b { color:var(--gold); }
+  #danger { position:absolute; left:50%; bottom:22px; width:min(70vw,420px); transform:translateX(-50%); text-align:center; font-size:12px; letter-spacing:.2em; text-transform:uppercase; }
+  #dangerbar { margin-top:4px; height:14px; border:2px solid var(--gold); background:rgba(0,0,0,.6); border-radius:3px; overflow:hidden; }
+  #dangerfill { height:100%; width:0; background:linear-gradient(90deg,#d99a2b,#b3261e); }
+  #vignette { position:fixed; inset:0; pointer-events:none; background:radial-gradient(ellipse at center, transparent 45%, rgba(179,38,30,.85) 100%); opacity:0; }
+  #flash { position:fixed; inset:0; pointer-events:none; background:#fff; opacity:0; }
+  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px;
+            background:radial-gradient(ellipse at center, rgba(60,32,10,.55), rgba(15,8,3,.92)); }
+  .screen.hidden { display:none; }
+  h1 { margin:0; font-size:clamp(30px,8vw,76px); color:var(--gold); letter-spacing:.06em; text-transform:uppercase; text-shadow:0 3px 0 #6b3d10, 0 6px 18px #000; line-height:1.05; }
+  h2 { margin:.2em 0 0; font-weight:normal; font-style:italic; font-size:clamp(14px,3.4vw,24px); color:var(--paper); }
+  .keys { margin:22px 0; display:grid; grid-template-columns:auto auto; gap:6px 18px; text-align:left; font-size:clamp(13px,3.2vw,18px); }
+  .keys span:nth-child(odd) { color:var(--gold); text-align:right; }
+  button { font:inherit; font-size:clamp(16px,4vw,26px); letter-spacing:.12em; text-transform:uppercase; color:var(--ink); background:var(--gold); border:3px solid #6b3d10; border-radius:6px; padding:12px 28px; cursor:pointer; box-shadow:0 5px 0 #6b3d10; }
+  button:active { transform:translateY(3px); box-shadow:0 2px 0 #6b3d10; }
+  .big { font-size:clamp(20px,5vw,36px); color:var(--gold); margin:10px 0; }
+  #best { margin-top:14px; font-size:14px; opacity:.8; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vignette"></div>
+<div id="flash"></div>
+
+<div id="hud">
+  <div class="row">
+    <div class="stat">Distance <b id="dist">0</b> m</div>
+    <div class="stat">Score <b id="score">0</b></div>
+    <div class="stat">Idols <b id="coins">0</b></div>
+  </div>
+  <div id="danger">The Boulder
+    <div id="dangerbar"><div id="dangerfill"></div></div>
+  </div>
+</div>
+
+<div id="menu" class="screen">
+  <h1>Temple of the<br>Lost Wilds</h1>
+  <h2>Outrun the boulder. Seize the golden idols. Don't look back.</h2>
+  <div class="keys">
+    <span>A / D &nbsp;or&nbsp; ← / →</span><span>Dash between lanes</span>
+    <span>W / ↑ / Space</span><span>Leap over logs &amp; pits</span>
+    <span>S / ↓</span><span>Slide under beams</span>
+    <span>Touch</span><span>Swipe left / right / up / down</span>
+  </div>
+  <button id="start">Begin Expedition</button>
+  <div id="best"></div>
+</div>
+
+<div id="over" class="screen hidden">
+  <h1 id="overTitle">Crushed!</h1>
+  <h2 id="overSub">The boulder always wins... eventually.</h2>
+  <div class="big">Score <span id="fScore">0</span> &nbsp;·&nbsp; <span id="fDist">0</span> m &nbsp;·&nbsp; <span id="fCoins">0</span> idols</div>
+  <div id="fBest" class="big" style="font-size:18px"></div>
+  <button id="retry">Run Again</button>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ------------------------------------------------------------------ */
+/* Setup                                                              */
+/* ------------------------------------------------------------------ */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const HAZE = 0xe0a867;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(HAZE);
+scene.fog = new THREE.Fog(HAZE, 25, 190);
+
+const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 400);
+camera.rotation.order = 'YXZ';
+scene.add(camera);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+scene.add(new THREE.HemisphereLight(0xffe2b0, 0x4a3320, 1.1));
+const sun = new THREE.DirectionalLight(0xffc27a, 1.6);
+sun.position.set(-40, 60, -30);
+scene.add(sun);
+
+/* ------------------------------------------------------------------ */
+/* Shared low-poly materials & geometry                               */
+/* ------------------------------------------------------------------ */
+const M = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+const mat = {
+  grass: M(0x5d7a2e), grass2: M(0x6c8a35),
+  bark: M(0x5a3a1e), leafA: M(0x2f6b2f), leafB: M(0x3f8a3a), leafC: M(0x8a9a2a),
+  rock: M(0x8b8478), rockDark: M(0x6a6358),
+  stone: M(0xb9a77f), stoneDark: M(0x7d6c4a), moss: M(0x6f8a45),
+  wood: M(0x7a4a22), woodDark: M(0x4a2c14),
+  gold: new THREE.MeshLambertMaterial({ color: 0xf2c14e, emissive: 0x7a5200, flatShading: true }),
+  pit: M(0x0e0803), mountain: M(0x7b6a55), snow: M(0xefe6d2),
+  skin: M(0xc98c5a), leather: M(0x6b3d10), sleeve: M(0x8a6a3a),
+};
+const geo = {
+  trunk: new THREE.CylinderGeometry(0.25, 0.4, 3, 6),
+  cone: new THREE.ConeGeometry(2, 4, 6),
+  blob: new THREE.IcosahedronGeometry(1.8, 0),
+  rock: new THREE.DodecahedronGeometry(1, 0),
+  pillar: new THREE.CylinderGeometry(0.7, 0.85, 1, 8),
+  box: new THREE.BoxGeometry(1, 1, 1),
+  log: new THREE.CylinderGeometry(0.45, 0.45, 1, 8),
+  idol: new THREE.OctahedronGeometry(0.42, 0),
+  mount: new THREE.ConeGeometry(1, 1, 5),
+  bolder: new THREE.IcosahedronGeometry(1, 1),
+};
+
+/* ------------------------------------------------------------------ */
+/* World constants                                                    */
+/* ------------------------------------------------------------------ */
+const LANES = [-3, 0, 3];
+const PATH_W = 9.6;
+const CHUNK = 40;
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+
+/* Ground follows the player so it is effectively infinite */
+const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), mat.grass);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.position.y = -0.02;
+scene.add(groundMesh);
+
+function brickTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#a89468'; g.fillRect(0, 0, 256, 256);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 3; x++) {
+    const off = (y % 2) * 43;
+    const shade = 150 + Math.floor(Math.random() * 40);
+    g.fillStyle = `rgb(${shade + 20},${shade},${shade - 45})`;
+    g.fillRect(x * 86 + off + 3, y * 64 + 3, 80, 58);
+  }
+  g.strokeStyle = '#4a3a1e'; g.lineWidth = 4; g.strokeRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  t.repeat.set(PATH_W / 6, 1 / 6 * 1);
+  return t;
+}
+const pathTex = brickTexture();
+pathTex.repeat.set(3, 40);
+const pathMesh = new THREE.Mesh(new THREE.PlaneGeometry(PATH_W, 240), new THREE.MeshLambertMaterial({ map: pathTex }));
+pathMesh.rotation.x = -Math.PI / 2;
+scene.add(pathMesh);
+
+/* Path border stones */
+const edgeL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 240), mat.stoneDark);
+const edgeR = edgeL.clone();
+scene.add(edgeL, edgeR);
+edgeL.position.set(-PATH_W / 2 - 0.25, 0.15, 0);
+edgeR.position.set(PATH_W / 2 + 0.25, 0.15, 0);
+
+/* A big setting sun */
+const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(40, 24),
+  new THREE.MeshBasicMaterial({ color: 0xfff0b8, fog: false }));
+scene.add(sunDisc);
+
+/* ------------------------------------------------------------------ */
+/* Scenery chunks                                                     */
+/* ------------------------------------------------------------------ */
+function mesh(g, m, x, y, z, sx = 1, sy = 1, sz = 1) {
+  const o = new THREE.Mesh(g, m);
+  o.position.set(x, y, z); o.scale.set(sx, sy, sz);
+  return o;
+}
+function tree(x, z) {
+  const grp = new THREE.Group();
+  const s = rand(0.9, 1.9);
+  grp.add(mesh(geo.trunk, mat.bark, 0, 1.5 * s, 0, s, s, s));
+  if (Math.random() < 0.55) {
+    grp.add(mesh(geo.cone, pick([mat.leafA, mat.leafB]), 0, 4.2 * s, 0, s, s, s));
+    grp.add(mesh(geo.cone, mat.leafA, 0, 5.6 * s, 0, s * .7, s * .7, s * .7));
+  } else {
+    grp.add(mesh(geo.blob, pick([mat.leafB, mat.leafC, mat.leafA]), 0, 4 * s, 0, s * 1.2, s, s * 1.2));
+  }
+  grp.position.set(x, 0, z); grp.rotation.y = rand(0, 6.28);
+  return grp;
+}
+function ruin(x, z) {
+  const grp = new THREE.Group();
+  const kind = Math.random();
+  if (kind < 0.45) { // broken pillar
+    const h = rand(2, 6);
+    grp.add(mesh(geo.pillar, mat.stone, 0, h / 2, 0, 1, h, 1));
+    grp.add(mesh(geo.box, mat.stoneDark, 0, 0.3, 0, 2.2, 0.6, 2.2));
+    if (Math.random() < .5) grp.add(mesh(geo.box, mat.stone, 0, h + .3, 0, 2, .6, 2));
+  } else if (kind < 0.75) { // moss-covered statue head
+    grp.add(mesh(geo.box, mat.stoneDark, 0, 0.8, 0, 3, 1.6, 3));
+    grp.add(mesh(geo.box, mat.stone, 0, 3, 0, 2.2, 2.8, 2.2));
+    grp.add(mesh(geo.box, mat.moss, 0, 4.5, 0, 2.4, .3, 2.4));
+    grp.add(mesh(geo.box, mat.pit, 0.6, 3.3, 1.12, .5, .5, .1));
+    grp.add(mesh(geo.box, mat.pit, -0.6, 3.3, 1.12, .5, .5, .1));
+    grp.add(mesh(geo.box, mat.pit, 0, 2.4, 1.12, .9, .3, .1));
+    grp.rotation.y = x < 0 ? -0.5 : 0.5;
+  } else { // ruined wall
+    for (let i = 0; i < 4; i++) grp.add(mesh(geo.box, i % 2 ? mat.stone : mat.stoneDark, i * 2 - 3, rand(.6, 2), 0, 2, rand(1.2, 3.5), 1.4));
+  }
+  grp.position.set(x, 0, z);
+  return grp;
+}
+function mountain(x, z) {
+  const grp = new THREE.Group();
+  const h = rand(40, 90), w = h * rand(.8, 1.1);
+  grp.add(mesh(geo.mount, mat.mountain, 0, h / 2, 0, w, h, w));
+  grp.add(mesh(geo.mount, mat.snow, 0, h * .84, 0, w * .32, h * .32, w * .32));
+  grp.position.set(x, 0, z);
+  return grp;
+}
+
+const chunks = [];
+let chunkFront = 0; // z of the next chunk start (goes negative)
+function makeChunk(z0) {
+  const g = new THREE.Group();
+  for (let i = 0; i < 16; i++) {
+    const side = Math.random() < .5 ? -1 : 1;
+    const x = side * rand(PATH_W / 2 + 2.5, 38);
+    g.add(tree(x, z0 - rand(0, CHUNK)));
+  }
+  for (let i = 0; i < 5; i++) {
+    const side = Math.random() < .5 ? -1 : 1;
+    const r = mesh(geo.rock, pick([mat.rock, mat.rockDark]), side * rand(PATH_W / 2 + 1.5, 30), 0.5, z0 - rand(0, CHUNK),
+      rand(.6, 2.2), rand(.5, 1.6), rand(.6, 2.2));
+    r.rotation.y = rand(0, 6); g.add(r);
+  }
+  if (Math.random() < .7) g.add(ruin((Math.random() < .5 ? -1 : 1) * rand(PATH_W / 2 + 3, 12), z0 - rand(0, CHUNK)));
+  if (Math.random() < .5) g.add(mountain((Math.random() < .5 ? -1 : 1) * rand(130, 190), z0 - rand(0, CHUNK)));
+  scene.add(g);
+  chunks.push({ g, zEnd: z0 - CHUNK });
+}
+
+/* ------------------------------------------------------------------ */
+/* Obstacles & idols                                                  */
+/* ------------------------------------------------------------------ */
+const obstacles = []; // {type, x, z, hw, hl, meshes, hit}
+const idols = [];     // {mesh, x, y, z}
+
+function addObstacle(type, laneIdx, z, spanAll = false) {
+  const x = spanAll ? 0 : LANES[laneIdx];
+  const width = spanAll ? PATH_W : 2.8;
+  const grp = new THREE.Group();
+  let hl = 0.8;
+  if (type === 'log') {
+    const l = mesh(geo.log, mat.wood, 0, 0.45, 0, 1, width, 1);
+    l.rotation.z = Math.PI / 2;
+    grp.add(l);
+    grp.add(mesh(geo.box, mat.woodDark, 0, .1, 0, width, .2, .6));
+    hl = 0.6;
+  } else if (type === 'beam') {
+    const w = spanAll ? PATH_W + 1 : 3.4;
+    grp.add(mesh(geo.box, mat.stone, 0, 1.75, 0, w, 0.8, 1.2));
+    grp.add(mesh(geo.box, mat.stoneDark, 0, 2.3, 0, w - .4, .3, 1.3));
+    grp.add(mesh(geo.pillar, mat.stone, -w / 2 + .5, 1, 0, .9, 2, .9));
+    grp.add(mesh(geo.pillar, mat.stone, w / 2 - .5, 1, 0, .9, 2, .9));
+    hl = 0.8;
+  } else if (type === 'rock') {
+    const r = mesh(geo.rock, mat.rock, 0, 1.3, 0, 1.5, 1.6, 1.5);
+    r.rotation.set(rand(0, 3), rand(0, 3), 0);
+    grp.add(r);
+    grp.add(mesh(geo.rock, mat.rockDark, .9, .6, .4, .8, .7, .8));
+    hl = 1.3;
+  } else if (type === 'pit') {
+    const len = 5;
+    grp.add(mesh(geo.box, mat.pit, 0, 0.04, 0, width, 0.06, len));
+    grp.add(mesh(geo.box, mat.stoneDark, 0, 0.12, len / 2, width, .25, .4));
+    grp.add(mesh(geo.box, mat.stoneDark, 0, 0.12, -len / 2, width, .25, .4));
+    hl = len / 2;
+  }
+  grp.position.set(x, 0, z);
+  scene.add(grp);
+  obstacles.push({ type, x, z, hw: width / 2, hl, grp, hit: false });
+}
+function addIdol(x, y, z) {
+  const m = new THREE.Mesh(geo.idol, mat.gold);
+  m.scale.set(1, 1.5, 1);
+  m.position.set(x, y, z);
+  scene.add(m);
+  idols.push({ mesh: m, x, y, z });
+}
+
+let nextRowZ = -55;
+function genRow(speed) {
+  const z = nextRowZ;
+  const spacing = 22 + speed * 0.55;
+  const r = Math.random();
+  if (r < 0.18) {
+    addObstacle('log', 1, z, true);
+    for (let i = 0; i < 5; i++) addIdol(0, 1.2 + 1.4 * Math.sin(Math.PI * i / 4), z + 4 - 2 * i);
+  } else if (r < 0.32) {
+    addObstacle('beam', 1, z, true);
+    for (let i = 0; i < 5; i++) addIdol(LANES[1], 0.6, z + 4 - 2 * i);
+  } else if (r < 0.46) {
+    addObstacle('pit', 1, z, true);
+    for (let i = 0; i < 5; i++) addIdol(0, 1.3 + 1.4 * Math.sin(Math.PI * i / 4), z + 4 - 2 * i);
+  } else {
+    // 1-2 blocked lanes with mixed types, at least one lane stays clear
+    const free = Math.floor(rand(0, 3));
+    const types = ['rock', 'log', 'beam', 'pit', 'rock'];
+    const t = pick(types);
+    for (let l = 0; l < 3; l++) {
+      if (l === free) continue;
+      if (Math.random() < .85) addObstacle(Math.random() < .5 ? t : pick(types), l, z);
+    }
+    for (let i = 0; i < 5; i++) addIdol(LANES[free], 1.2, z - 6 - i * 2);
+  }
+  nextRowZ -= spacing;
+}
+
+/* ------------------------------------------------------------------ */
+/* First-person hand + whip                                           */
+/* ------------------------------------------------------------------ */
+const hand = new THREE.Group();
+{
+  const sleeve = mesh(geo.box, mat.sleeve, 0, 0, 0.1, 0.22, 0.22, 0.6);
+  const fist = mesh(geo.box, mat.skin, 0, 0, -0.3, 0.2, 0.18, 0.22);
+  const grip = mesh(geo.box, mat.leather, 0, -0.03, -0.38, 0.1, 0.1, 0.35);
+  const coil = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.035, 5, 10), mat.leather);
+  coil.position.set(0, -0.14, -0.2); coil.rotation.x = Math.PI / 2;
+  hand.add(sleeve, fist, grip, coil);
+  hand.position.set(0.38, -0.36, -0.6);
+  hand.rotation.set(0.15, 0.15, 0);
+  hand.scale.setScalar(0.32);
+}
+camera.add(hand);
+
+/* ------------------------------------------------------------------ */
+/* Audio (tiny WebAudio synth)                                        */
+/* ------------------------------------------------------------------ */
+let actx = null, rumbleGain = null;
+function audioInit() {
+  if (actx) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    // looping low rumble for the boulder
+    const len = actx.sampleRate * 2, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    rumbleGain = actx.createGain(); rumbleGain.gain.value = 0;
+    src.connect(rumbleGain).connect(actx.destination); src.start();
+  } catch (e) { actx = null; }
+}
+function beep(freq, dur, type = 'square', vol = 0.08, slide = 0) {
+  if (!actx) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+}
+const sfx = {
+  coin: () => { beep(880, .08, 'square', .06); setTimeout(() => beep(1320, .12, 'square', .06), 60); },
+  jump: () => beep(260, .18, 'triangle', .1, 260),
+  slide: () => beep(300, .25, 'sawtooth', .04, -200),
+  lane: () => beep(180, .06, 'triangle', .06),
+  hit: () => beep(120, .35, 'sawtooth', .18, -90),
+  die: () => { beep(200, .9, 'sawtooth', .22, -170); beep(70, 1.2, 'square', .2, -40); },
+};
+
+/* ------------------------------------------------------------------ */
+/* Game state                                                         */
+/* ------------------------------------------------------------------ */
+const $ = id => document.getElementById(id);
+const hud = $('hud'), menu = $('menu'), over = $('over'), vignette = $('vignette'), flashEl = $('flash');
+
+const P = { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true };
+let state = 'menu';
+let speed = 0, baseSpeed = 14, danger = 0, stumble = 0;
+let score = 0, idolCount = 0, dist = 0, shake = 0, runT = 0, roll = 0;
+let best = 0;
+try { best = +localStorage.getItem('tlw_best') || 0; } catch (e) {}
+$('best').textContent = best ? `Best score: ${best}` : '';
+
+function clearWorld() {
+  for (const o of obstacles) scene.remove(o.grp);
+  for (const i of idols) scene.remove(i.mesh);
+  for (const c of chunks) scene.remove(c.g);
+  obstacles.length = idols.length = chunks.length = 0;
+}
+
+function resetGame() {
+  clearWorld();
+  Object.assign(P, { x: 0, y: 0, vy: 0, z: 0, lane: 1, sliding: 0, grounded: true });
+  speed = 0; baseSpeed = 14; danger = 0.0; stumble = 0;
+  score = 0; idolCount = 0; dist = 0; shake = 0; runT = 0; roll = 0;
+  nextRowZ = -55; chunkFront = 60;
+  while (chunkFront > -300) { chunkFront -= CHUNK; makeChunk(chunkFront + CHUNK); }
+  while (nextRowZ > -240) genRow(14);
+}
+
+function startGame() {
+  audioInit();
+  if (actx && actx.state === 'suspended') actx.resume();
+  resetGame();
+  menu.classList.add('hidden'); over.classList.add('hidden');
+  hud.style.display = 'block';
+  state = 'play';
+  speed = 10;
+}
+
+function endGame(reason) {
+  state = 'dead';
+  sfx.die();
+  if (rumbleGain) rumbleGain.gain.value = 0;
+  flashEl.style.transition = 'none'; flashEl.style.opacity = .8;
+  requestAnimationFrame(() => { flashEl.style.transition = 'opacity 1s'; flashEl.style.opacity = 0; });
+  const isBest = score > best;
+  if (isBest) { best = score; try { localStorage.setItem('tlw_best', best); } catch (e) {} }
+  $('overTitle').textContent = reason === 'boulder' ? 'Crushed!' : 'Fallen!';
+  $('overSub').textContent = reason === 'boulder' ? 'The boulder always wins... eventually.' : 'The wilds claim another explorer.';
+  $('fScore').textContent = score; $('fDist').textContent = Math.floor(dist); $('fCoins').textContent = idolCount;
+  $('fBest').textContent = isBest ? '★ New best score! ★' : `Best: ${best}`;
+  setTimeout(() => { over.classList.remove('hidden'); hud.style.display = 'none'; }, 900);
+}
+
+/* ------------------------------------------------------------------ */
+/* Input                                                              */
+/* ------------------------------------------------------------------ */
+function moveLane(d) {
+  if (state !== 'play') return;
+  const n = Math.max(0, Math.min(2, P.lane + d));
+  if (n !== P.lane) { P.lane = n; roll = -d * 0.07; sfx.lane(); }
+}
+function jump() {
+  if (state !== 'play' || !P.grounded) return;
+  P.vy = 10.2; P.grounded = false; P.sliding = 0; sfx.jump();
+}
+function slide() {
+  if (state !== 'play') return;
+  if (!P.grounded) P.vy = Math.min(P.vy, -12); // fast-fall into slide
+  P.sliding = 0.75; sfx.slide();
+}
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (state !== 'play') {
+    if (k === ' ' || k === 'enter') { startGame(); e.preventDefault(); }
+    return;
+  }
+  if (k === 'a' || k === 'arrowleft') moveLane(-1);
+  else if (k === 'd' || k === 'arrowright') moveLane(1);
+  else if (k === 'w' || k === 'arrowup' || k === ' ') { jump(); e.preventDefault(); }
+  else if (k === 's' || k === 'arrowdown') slide();
+});
+let touch = null;
+addEventListener('touchstart', e => { const t = e.changedTouches[0]; touch = { x: t.clientX, y: t.clientY }; }, { passive: true });
+addEventListener('touchend', e => {
+  if (!touch) return;
+  const t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y;
+  touch = null;
+  if (Math.hypot(dx, dy) < 24) return;
+  if (Math.abs(dx) > Math.abs(dy)) moveLane(dx > 0 ? 1 : -1);
+  else if (dy < 0) jump(); else slide();
+}, { passive: true });
+$('start').addEventListener('click', startGame);
+$('retry').addEventListener('click', startGame);
+
+/* ------------------------------------------------------------------ */
+/* Update                                                             */
+/* ------------------------------------------------------------------ */
+const EYE = 1.7, EYE_SLIDE = 0.75;
+
+function update(dt) {
+  runT += dt;
+
+  if (state === 'play') {
+    // speed: ramps with distance, drops when stumbling
+    baseSpeed = Math.min(14 + dist * 0.0035, 34);
+    const target = baseSpeed * (stumble > 0 ? 0.55 : 1);
+    speed += (target - speed) * Math.min(1, dt * 2.5);
+    stumble = Math.max(0, stumble - dt);
+
+    P.z -= speed * dt;
+    dist += speed * dt;
+    score += Math.floor(speed * dt * 1.0 * 10) / 10;
+
+    // lane + vertical motion
+    P.x += (LANES[P.lane] - P.x) * Math.min(1, dt * 14);
+    if (!P.grounded) {
+      P.vy -= 26 * dt; P.y += P.vy * dt;
+      if (P.y <= 0) { P.y = 0; P.vy = 0; P.grounded = true; }
+    }
+    if (P.sliding > 0) P.sliding -= dt;
+
+    // boulder pressure
+    danger = Math.max(0, danger - 0.03 * dt) + 0;
+    if (danger >= 1) endGame('boulder');
+
+    // collisions
+    const sliding = P.sliding > 0;
+    for (const o of obstacles) {
+      if (o.hit) continue;
+      if (Math.abs(P.z - o.z) > o.hl + 0.35) continue;
+      if (Math.abs(P.x - o.x) > o.hw + 0.1) continue;
+      let hit = false;
+      if (o.type === 'log') hit = P.y < 0.75;
+      else if (o.type === 'beam') hit = !sliding;
+      else if (o.type === 'rock') hit = P.y < 2.4;
+      else if (o.type === 'pit') hit = P.y < 0.25;
+      if (hit) {
+        o.hit = true;
+        danger += 0.4;
+        stumble = 1.2; shake = 0.6; speed *= 0.5;
+        sfx.hit();
+        if (o.type === 'pit') { if (danger < 1) danger = Math.min(.99, danger + .15); }
+        if (danger >= 1) { endGame('boulder'); }
+      }
+    }
+
+    // idols
+    for (let i = idols.length - 1; i >= 0; i--) {
+      const c = idols[i];
+      if (Math.abs(c.z - P.z) < 1.1 && Math.abs(c.x - P.x) < 1.3 && Math.abs((P.y + 1.1) - c.y) < 1.4) {
+        scene.remove(c.mesh); idols.splice(i, 1);
+        idolCount++; score += 25; sfx.coin();
+      }
+    }
+  } else if (state === 'menu') {
+    // gentle auto-drift on the title screen
+    P.z -= 8 * dt; speed = 8; P.x = Math.sin(runT * .5) * 1.5;
+  } else {
+    speed *= Math.pow(0.02, dt);
+    P.z -= speed * dt;
+  }
+
+  // world streaming
+  while (nextRowZ > P.z - 240) genRow(Math.max(speed, 14));
+  while (chunks.length && chunks[chunks.length - 1].zEnd > P.z - 260) {
+    makeChunk(chunks[chunks.length - 1].zEnd);
+  }
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (chunks[i].zEnd > P.z + 60) { scene.remove(chunks[i].g); chunks.splice(i, 1); }
+  }
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    if (obstacles[i].z > P.z + 20) { scene.remove(obstacles[i].grp); obstacles.splice(i, 1); }
+  }
+  for (let i = idols.length - 1; i >= 0; i--) {
+    const c = idols[i];
+    c.mesh.rotation.y += dt * 3;
+    if (c.z > P.z + 20) { scene.remove(c.mesh); idols.splice(i, 1); }
+  }
+
+  // ground follows player
+  groundMesh.position.set(P.x, -0.02, P.z);
+  pathMesh.position.set(0, 0.01, P.z - 60);
+  pathTex.offset.y = -(P.z - 60) / 6 * 1; // keep bricks anchored in world space
+  edgeL.position.z = edgeR.position.z = P.z - 60;
+  sunDisc.position.set(-60, 55, P.z - 380); sunDisc.lookAt(camera.position);
+
+  // camera
+  const slideT = P.sliding > 0 ? 1 : 0;
+  const eyeTarget = slideT ? EYE_SLIDE : EYE;
+  camera.userData.eye = camera.userData.eye ?? EYE;
+  camera.userData.eye += (eyeTarget - camera.userData.eye) * Math.min(1, dt * 16);
+  const bob = state === 'play' && P.grounded ? Math.sin(runT * speed * 0.7) * 0.06 : 0;
+  shake = Math.max(0, shake - dt * 1.2);
+  const sx = (Math.random() - .5) * shake * .35 + (danger > .55 ? (Math.random() - .5) * (danger - .55) * .12 : 0);
+  const sy = (Math.random() - .5) * shake * .35;
+  camera.position.set(P.x + sx, P.y + camera.userData.eye + bob + sy, P.z);
+  roll += (0 - roll) * Math.min(1, dt * 7);
+  camera.rotation.set(-0.05 + (P.grounded ? 0 : P.vy * -0.004) + shake * .05, 0, roll + (LANES[P.lane] - P.x) * -0.015);
+  // hand sway
+  const hb = state === 'play' ? Math.sin(runT * speed * 0.7) : 0;
+  hand.position.set(0.38 + hb * 0.02, -0.36 + Math.abs(hb) * 0.04 + (P.sliding > 0 ? -.1 : 0), -0.6);
+  hand.rotation.x = 0.15 + hb * 0.05;
+  // FOV widens with speed
+  const fov = 75 + (speed / 34) * 12;
+  if (Math.abs(camera.fov - fov) > .1) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 4); camera.updateProjectionMatrix(); }
+
+  // HUD & rumble
+  $('dist').textContent = Math.floor(dist);
+  $('score').textContent = Math.floor(score);
+  $('coins').textContent = idolCount;
+  $('dangerfill').style.width = Math.min(100, danger * 100) + '%';
+  vignette.style.opacity = state === 'play' ? Math.max(0, (danger - .25) * 1.2) * (0.75 + 0.25 * Math.sin(runT * 12)) : 0;
+  if (rumbleGain && actx) rumbleGain.gain.value = state === 'play' ? Math.min(1, danger * 1.3) * 0.7 : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Main loop                                                          */
+/* ------------------------------------------------------------------ */
+resetGame();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// debug/test hook
+window.__game = { P, get state() { return state; }, get danger() { return danger; }, startGame, obstacles, idols, jump, slide, moveLane };
+</script>
+</body>
+</html>
